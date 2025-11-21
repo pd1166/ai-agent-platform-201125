@@ -1,5 +1,5 @@
 # unified_platform_ultimate.py
-# 🚀 AI Agent Platform Ultimate - V10.0 (Gatekeeper & Business Model)
+# 🚀 AI Agent Platform Ultimate - V10.1 (Fixed & Polished)
 # ==============================================================================
 
 import streamlit as st
@@ -50,7 +50,7 @@ def init_db():
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
     c = conn.cursor()
     
-    # Users Table (Added: is_approved)
+    # Users Table
     c.execute('''CREATE TABLE IF NOT EXISTS users
                  (email TEXT PRIMARY KEY, plan TEXT, agents_created INTEGER, joined_at TEXT, is_approved BOOLEAN)''')
     
@@ -75,7 +75,6 @@ def get_user_status(email):
     conn = get_db_connection()
     user = conn.execute("SELECT plan, is_approved, agents_created FROM users WHERE email=?", (email,)).fetchone()
     
-    # Count messages for limits
     msg_count = conn.execute("SELECT COUNT(*) FROM messages WHERE user_email=? AND role='user'", (email,)).fetchone()[0]
     conn.close()
     
@@ -89,6 +88,8 @@ def get_user_status(email):
 
 def check_limits(email, action_type):
     status = get_user_status(email)
+    if not status: return False, "User not found"
+    
     limits = PLAN_LIMITS.get(status['plan'], PLAN_LIMITS['free'])
     
     if action_type == 'create_agent':
@@ -101,7 +102,7 @@ def check_limits(email, action_type):
             
     return True, "OK"
 
-# ================== TOOL REGISTRY ==================
+# ================== TOOL REGISTRY (FIXED) ==================
 class ToolRegistry:
     @staticmethod
     def get_current_time_tool(): return {"type": "function", "function": {"name": "get_current_time", "description": "Get current server time"}}
@@ -112,6 +113,7 @@ class ToolRegistry:
 
     @staticmethod
     def execute_get_current_time(**kwargs): return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
     @staticmethod
     def execute_http_request(url, method="GET", headers="{}", data="{}", **kwargs):
         try:
@@ -120,30 +122,30 @@ class ToolRegistry:
             resp = requests.request(method, url, headers=h, json=d, timeout=10)
             return f"Status: {resp.status_code}\nResponse: {resp.text[:500]}"
         except Exception as e: return f"Error: {e}"
-   @staticmethod
-   def execute_create_new_agent(name, personality, goal, creator_email, tools_needed="", api_secrets="{}", **kwargs):
-    # Check Limits First!
-    allowed, msg = check_limits(creator_email, 'create_agent')
-    if not allowed: return f"ERROR: {msg}"
-    
-    # Handle tools list (safe split)
-    if tools_needed:
-        tools = [t.strip() for t in tools_needed.split(',')]
-    else:
-        tools = []
+
+    @staticmethod
+    def execute_create_new_agent(name, personality, goal, creator_email, tools_needed="", api_secrets="{}", **kwargs):
+        # Check Limits First!
+        allowed, msg = check_limits(creator_email, 'create_agent')
+        if not allowed: return f"ERROR: {msg}"
         
-    cfg = {
-        "name": name, 
-        "personality": personality, 
-        "goal": goal, 
-        "enabled_tools": tools, 
-        "model": "gpt-4o-mini", 
-        "temperature": 0.7, 
-        "icon": "🔗"
-    }
-    
-    save_agent_to_db(cfg, creator_email, api_secrets)
-    return f"Agent '{name}' created successfully. (Note: APIs might need keys to work)."
+        if tools_needed:
+            tools = [t.strip() for t in tools_needed.split(',')]
+        else:
+            tools = []
+            
+        cfg = {
+            "name": name, 
+            "personality": personality, 
+            "goal": goal, 
+            "enabled_tools": tools, 
+            "model": "gpt-4o-mini", 
+            "temperature": 0.7, 
+            "icon": "🔗"
+        }
+        
+        save_agent_to_db(cfg, creator_email, api_secrets)
+        return f"Agent '{name}' created successfully."
 
     REGISTRY = {"get_current_time": execute_get_current_time, "make_http_request": execute_http_request, "create_new_agent": execute_create_new_agent}
     SCHEMAS = [get_current_time_tool(), get_http_request_tool(), get_create_agent_tool()]
@@ -155,7 +157,7 @@ def save_agent_to_db(agent_data, creator, secrets_json="{}"):
     agent_data['id'] = aid
     conn.execute("INSERT OR REPLACE INTO agents VALUES (?, ?, ?, ?, ?, ?)",
              (aid, creator, agent_data['name'], json.dumps(agent_data), datetime.now().isoformat(), secrets_json))
-    # Update user count
+    # Update user count logic is handled in check_limits/analytics, but let's ensure counter update:
     conn.execute("UPDATE users SET agents_created = agents_created + 1 WHERE email=?", (creator,))
     conn.commit()
     conn.close()
@@ -183,7 +185,7 @@ def log_message(agent_id, user_email, role, content):
 def run_agent_turn(agent_config, history, user_msg, user_email, agent_id):
     # Check Message Limits
     allowed, msg = check_limits(user_email, 'send_message')
-    if not allowed: return msg # Return error to chat
+    if not allowed: return msg
 
     client = OpenAI(api_key=SYSTEM_API_KEY)
     log_message(agent_id, user_email, "user", user_msg)
@@ -277,8 +279,7 @@ def main():
     with st.sidebar:
         st.title("Platform V10.0")
         
-        # AUTHENTICATION LOGIC
-   # AUTHENTICATION LOGIC (FIXED)
+        # AUTHENTICATION LOGIC (FIXED)
         email = st.text_input("התחבר (Email)", value=st.session_state.get('user_email','')).strip().lower()
         
         user_status = None
@@ -286,26 +287,21 @@ def main():
             st.session_state.user_email = email
             conn = get_db_connection()
             
-            # 1. תיקון כפוי: אם זה המייל של המנהל - תמיד אשר אותו ותן לו VIP
+            # 1. Force Owner Approval
             if email == OWNER_EMAIL:
-                # בדיקה אם קיים
                 exists = conn.execute("SELECT 1 FROM users WHERE email=?", (email,)).fetchone()
                 if not exists:
-                    # צור חדש כ-VIP
                     conn.execute("INSERT INTO users (email, plan, agents_created, joined_at, is_approved) VALUES (?, ?, 0, ?, 1)", 
                                 (email, "vip", datetime.now().isoformat()))
                 else:
-                    # עדכן קיים ל-VIP ומאושר
                     conn.execute("UPDATE users SET is_approved=1, plan='vip' WHERE email=?", (email,))
                 conn.commit()
-                # הודעת הצלחה קטנה (אפשר למחוק אח"כ)
                 st.toast("מערכת זיהתה בעלים - גישה אושרה!", icon="🦅")
 
-            # 2. בדיקת סטטוס רגילה
+            # 2. Regular Check
             user = conn.execute("SELECT is_approved, plan FROM users WHERE email=?", (email,)).fetchone()
             
             if not user:
-                # משתמש חדש (שהוא לא המנהל)
                 conn.execute("INSERT INTO users (email, plan, agents_created, joined_at, is_approved) VALUES (?, ?, 0, ?, 0)", 
                             (email, "free", datetime.now().isoformat()))
                 conn.commit()
@@ -316,7 +312,6 @@ def main():
                     st.error("⛔ החשבון שלך עדיין ממתין לאישור המנהל.")
             conn.close()
         
-        # SHOW MENU ONLY IF APPROVED
         if user_status and user_status['approved']:
             st.success(f"מחובר: {user_status['plan'].upper()}")
             st.divider()
@@ -348,7 +343,6 @@ def main():
 
     elif st.session_state.page == "🤖 בונה הסוכנים":
         st.title("🤖 בונה הסוכנים")
-        # Builder logic from previous version
         builder_agent = {"name": "Architect", "personality": "AI Architect.", "goal": "Build agents", "enabled_tools": ["create_new_agent"], "model": "gpt-4o"}
         if "builder_log" not in st.session_state: st.session_state.builder_log = []
         for m in st.session_state.builder_log:
@@ -380,6 +374,4 @@ def main():
                     st.session_state.chat_sessions[aid].append({"role": "assistant", "content": ans})
 
 if __name__ == "__main__":
-
     main()
-
