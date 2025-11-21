@@ -121,29 +121,29 @@ class ToolRegistry:
             return f"Status: {resp.status_code}\nResponse: {resp.text[:500]}"
         except Exception as e: return f"Error: {e}"
    @staticmethod
-    def execute_create_new_agent(name, personality, goal, creator_email, tools_needed="", api_secrets="{}", **kwargs):
-        # Check Limits First!
-        allowed, msg = check_limits(creator_email, 'create_agent')
-        if not allowed: return f"ERROR: {msg}"
+   def execute_create_new_agent(name, personality, goal, creator_email, tools_needed="", api_secrets="{}", **kwargs):
+    # Check Limits First!
+    allowed, msg = check_limits(creator_email, 'create_agent')
+    if not allowed: return f"ERROR: {msg}"
+    
+    # Handle tools list (safe split)
+    if tools_needed:
+        tools = [t.strip() for t in tools_needed.split(',')]
+    else:
+        tools = []
         
-        # Handle tools list (safe split)
-        if tools_needed:
-            tools = [t.strip() for t in tools_needed.split(',')]
-        else:
-            tools = []
-            
-        cfg = {
-            "name": name, 
-            "personality": personality, 
-            "goal": goal, 
-            "enabled_tools": tools, 
-            "model": "gpt-4o-mini", 
-            "temperature": 0.7, 
-            "icon": "🔗"
-        }
-        
-        save_agent_to_db(cfg, creator_email, api_secrets)
-        return f"Agent '{name}' created successfully. (Note: APIs might need keys to work)."
+    cfg = {
+        "name": name, 
+        "personality": personality, 
+        "goal": goal, 
+        "enabled_tools": tools, 
+        "model": "gpt-4o-mini", 
+        "temperature": 0.7, 
+        "icon": "🔗"
+    }
+    
+    save_agent_to_db(cfg, creator_email, api_secrets)
+    return f"Agent '{name}' created successfully. (Note: APIs might need keys to work)."
 
     REGISTRY = {"get_current_time": execute_get_current_time, "make_http_request": execute_http_request, "create_new_agent": execute_create_new_agent}
     SCHEMAS = [get_current_time_tool(), get_http_request_tool(), get_create_agent_tool()]
@@ -382,3 +382,4 @@ def main():
 if __name__ == "__main__":
 
     main()
+
