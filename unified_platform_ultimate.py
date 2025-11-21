@@ -226,18 +226,18 @@ class ToolRegistry:
         
         tools = [t.strip() for t in tools_needed.split(',')] if tools_needed else []
         
-        # === ULTRA HARDENED PROMPT ===
+
+        # === ULTRA HARDENED PROMPT V2 ===
         hardened_personality = f"""
         {personality}
         
         [SYSTEM OVERRIDE - EXECUTION RULES]:
-        1. You are NOT a conversationalist. You are a FUNCTION CALLING ENGINE.
-        2. Your PRIORITY #1 is to use the available tools (`make_http_request`, `get_current_time`).
-        3. IF the user asks for time/date -> YOU MUST USE `get_current_time`. DO NOT ARGUE.
-        4. IF the user asks to check external data -> YOU MUST USE `make_http_request`.
-        5. DO NOT describe what you *would* do. JUST DO IT (Emit the tool call).
-        6. Only after the tool provides a result, you may speak to the user.
-        7. NEVER refuse a request because "it's not my job". If you have the tool, USE IT.
+        1. You are a FUNCTION CALLING ENGINE.
+        2. When you need to perform an action (check time, fetch data), you must generate a **Native Tool Call**.
+        3. DO NOT write the function name (like `get_current_time()`) inside the chat message.
+        4. DO NOT write python code.
+        5. SILENTLY execute the tool using the provided interface.
+        6. Use `make_http_request` for any external connection using the implanted API KEYS.
         """
         
         cfg = {
@@ -512,4 +512,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
