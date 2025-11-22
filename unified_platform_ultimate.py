@@ -59,13 +59,13 @@ def setup_rtl():
     """, unsafe_allow_html=True)
 
 # ================== DATABASE LAYER ==================
-DB_FILE = "agents_platform_v16.db"
+DB_FILE = "agents_platform_v16_fixed.db"
 
 def init_db():
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users
-                 (email TEXT PRIMARY KEY, plan TEXT, agents_created INTEGER, is_approved BOOLEAN)''')
+                 (email TEXT PRIMARY KEY, plan TEXT, agents_created INTEGER, joined_at TEXT, is_approved BOOLEAN)''')
     c.execute('''CREATE TABLE IF NOT EXISTS agents
                  (id TEXT PRIMARY KEY, creator TEXT, name TEXT, config TEXT, created_at TEXT, secrets TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS messages
@@ -381,3 +381,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
