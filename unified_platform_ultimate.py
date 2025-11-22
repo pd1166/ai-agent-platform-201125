@@ -103,7 +103,7 @@ def get_user_agents(user_email):
             cfg['secrets'] = r[5]
             cfg['id'] = r[0]
             agents[r[0]] = cfg
-        exceptException:
+        except Exception:
             continue 
     return agents
 
@@ -368,3 +368,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
