@@ -1,6 +1,6 @@
 # unified_platform_ultimate.py
-# 🚀 AI Agent Platform Ultimate - V13.0 (Enterprise Architecture: ReAct Loop & System Override)
-# ==============================================================================================
+# 🚀 AI Agent Platform Ultimate - V14.0 (Gold Edition: Auto-Tooling & Robustness)
+# ==============================================================================
 
 import streamlit as st
 import os
@@ -10,95 +10,62 @@ import sqlite3
 import math
 import requests
 import pandas as pd
-import plotly.express as px
-from datetime import datetime, timedelta
+from datetime import datetime
 from openai import OpenAI
 import hashlib
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional
 import logging
 
-# ================== SYSTEM CONFIGURATION ==================
+# ================== CONFIGURATION ==================
 st.set_page_config(
-    page_title="AI Enterprise Platform V13.0",
-    page_icon="🚀",
+    page_title="AI Platform V14.0",
+    page_icon="💎",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 logging.basicConfig(level=logging.INFO)
 
-# ================== SECURITY & AUTH LAYER ==================
+# ================== SECURITY CHECK ==================
 try:
     SYSTEM_API_KEY = st.secrets["OPENAI_API_KEY"]
 except:
-    st.error("❌ CRITICAL ERROR: Missing OPENAI_API_KEY in .streamlit/secrets.toml")
+    st.error("❌ CRITICAL: Missing OPENAI_API_KEY in .streamlit/secrets.toml")
     st.stop()
 
 OWNER_EMAIL = "pompdany@gmail.com"
 
-# ================== BUSINESS LOGIC LAYER ==================
+# ================== BUSINESS LIMITS ==================
 PLAN_LIMITS = {
     "free": {"agents": 1, "messages": 50},
     "pro": {"agents": 10, "messages": 1000},
     "vip": {"agents": 99999, "messages": 99999}
 }
 
-# ================== FRONTEND LAYER (RTL & UX) ==================
+# ================== RTL & UI STYLING ==================
 def setup_rtl():
     st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700&display=swap');
-        
-        /* Base RTL Settings */
-        html, body, [class*="css"] {
-            font-family: 'Heebo', sans-serif;
-            direction: rtl;
-            text-align: right;
-        }
-        
-        /* Input Fields Fix */
-        .stTextInput, .stTextArea, .stSelectbox, input, textarea {
-            direction: rtl;
-            text-align: right;
-        }
-        
-        /* Chat Bubbles Alignment */
-        .stChatMessage {
-            direction: rtl;
-            text-align: right;
-        }
-        
-        /* Headers Alignment */
-        h1, h2, h3, p, div, label {
-            text-align: right !important;
-        }
-
-        /* Code Blocks - Keep LTR */
-        code, pre {
-            direction: ltr !important;
-            text-align: left !important;
-        }
-        
-        /* Sidebar Fix */
-        section[data-testid="stSidebar"] {
-            direction: rtl;
-        }
+        html, body, [class*="css"] { font-family: 'Heebo', sans-serif; direction: rtl; text-align: right; }
+        .stTextInput, .stTextArea, .stSelectbox, input, textarea { direction: rtl; text-align: right; }
+        .stChatMessage { direction: rtl; text-align: right; }
+        p, div, label, h1, h2, h3 { text-align: right !important; }
+        code, pre { direction: ltr !important; text-align: left !important; }
+        section[data-testid="stSidebar"] { direction: rtl; }
     </style>
     """, unsafe_allow_html=True)
 
-# ================== DATABASE LAYER (PERSISTENCE) ==================
-DB_FILE = "agents_platform_v13.db"
+# ================== DATABASE LAYER ==================
+DB_FILE = "agents_platform_v14.db"
 
 def init_db():
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
     c = conn.cursor()
-    # Users Table
     c.execute('''CREATE TABLE IF NOT EXISTS users
-                 (email TEXT PRIMARY KEY, plan TEXT, agents_created INTEGER, joined_at TEXT, is_approved BOOLEAN)''')
-    # Agents Table
+                 (email TEXT PRIMARY KEY, plan TEXT, agents_created INTEGER, is_approved BOOLEAN)''')
     c.execute('''CREATE TABLE IF NOT EXISTS agents
                  (id TEXT PRIMARY KEY, creator TEXT, name TEXT, config TEXT, created_at TEXT, secrets TEXT)''')
-    # Messages Table
     c.execute('''CREATE TABLE IF NOT EXISTS messages
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id TEXT, user_email TEXT, role TEXT, content TEXT, timestamp TEXT)''')
     conn.commit()
@@ -109,55 +76,33 @@ def get_db_connection():
 
 init_db()
 
-# ================== UTILITY FUNCTIONS ==================
-def safe_json_loads(json_str: str) -> Dict:
-    """
-    Robust JSON parser. Handles common LLM errors like single quotes or markdown wrapping.
-    """
+# ================== UTILS ==================
+def safe_json_loads(json_str):
     if not json_str: return {}
     if isinstance(json_str, dict): return json_str
-    try:
-        return json.loads(json_str)
-    except json.JSONDecodeError:
-        try:
-            # Attempt 1: Replace single quotes
-            return json.loads(json_str.replace("'", '"'))
-        except:
-            # Attempt 2: Strip markdown code blocks
-            clean_str = json_str.replace("```json", "").replace("```", "").strip()
-            try:
-                return json.loads(clean_str)
-            except:
-                return {}
+    try: return json.loads(json_str)
+    except:
+        try: return json.loads(json_str.replace("'", '"'))
+        except: return {}
 
-def get_user_status(email: str) -> Optional[Dict]:
+def check_limits(email, action_type):
     conn = get_db_connection()
-    user = conn.execute("SELECT plan, is_approved, agents_created FROM users WHERE email=?", (email,)).fetchone()
-    msg_count = conn.execute("SELECT COUNT(*) FROM messages WHERE user_email=? AND role='user'", (email,)).fetchone()[0]
+    user = conn.execute("SELECT plan, agents_created FROM users WHERE email=?", (email,)).fetchone()
     conn.close()
-    if not user: return None
-    return {"plan": user[0], "is_approved": bool(user[1]), "agents_used": user[2], "msgs_used": msg_count}
-
-def check_limits(email: str, action_type: str) -> tuple[bool, str]:
-    status = get_user_status(email)
-    if not status: return False, "User not found"
-    limits = PLAN_LIMITS.get(status['plan'], PLAN_LIMITS['free'])
+    if not user: return False, "User not found"
     
-    if action_type == 'create_agent' and status['agents_used'] >= limits['agents']:
-        return False, f"הגעת למגבלת הסוכנים ({limits['agents']}). שדרג חבילה."
-    if action_type == 'send_message' and status['msgs_used'] >= limits['messages']:
-        return False, f"הגעת למגבלת ההודעות ({limits['messages']}). שדרג חבילה."
+    limits = PLAN_LIMITS.get(user[0], PLAN_LIMITS['free'])
+    if action_type == 'create_agent' and user[1] >= limits['agents']:
+        return False, "Limit reached"
     return True, "OK"
 
-# ================== TOOL REGISTRY (THE ENGINE) ==================
+# ================== TOOL REGISTRY (THE BRAIN) ==================
 class ToolRegistry:
-    """
-    The execution layer. This maps AI intent to Python code.
-    """
     
+    # --- DEFINITIONS ---
     @staticmethod
     def get_current_time_tool(): 
-        return {"type": "function", "function": {"name": "get_current_time", "description": "Get current server time"}}
+        return {"type": "function", "function": {"name": "get_current_time", "description": "Get exact current date and time."}}
     
     @staticmethod
     def get_http_request_tool(): 
@@ -165,14 +110,14 @@ class ToolRegistry:
             "type": "function", 
             "function": {
                 "name": "make_http_request", 
-                "description": "Universal API Client. Send HTTP requests to ANY external service.", 
+                "description": "Send HTTP Request to external APIs (Gmail, CRM, Stores).", 
                 "parameters": {
                     "type": "object", 
                     "properties": {
                         "url": {"type": "string"}, 
-                        "method": {"type": "string", "enum": ["GET", "POST", "PUT", "DELETE"]}, 
-                        "headers": {"type": "string", "description": "JSON format headers (e.g. Authorization)"}, 
-                        "data": {"type": "string", "description": "JSON format body data"}
+                        "method": {"type": "string", "enum": ["GET", "POST"]}, 
+                        "headers": {"type": "string", "description": "JSON string of headers"}, 
+                        "data": {"type": "string", "description": "JSON string of body"}
                     }, 
                     "required": ["url", "method"]
                 }
@@ -185,23 +130,22 @@ class ToolRegistry:
             "type": "function", 
             "function": {
                 "name": "create_new_agent", 
-                "description": "Create a specialized agent. REQUIRES api_secrets if external tools are needed.", 
+                "description": "Build a new agent. YOU MUST provide api_secrets if the agent needs external access.", 
                 "parameters": {
                     "type": "object", 
                     "properties": {
                         "name": {"type": "string"}, 
                         "personality": {"type": "string"}, 
                         "goal": {"type": "string"}, 
-                        "tools_needed": {"type": "string"}, 
-                        "api_secrets": {"type": "string"}
+                        "tools_needed": {"type": "string", "description": "Keywords: 'http', 'time', 'search'"}, 
+                        "api_secrets": {"type": "string", "description": "JSON string of API keys"}
                     }, 
                     "required": ["name", "personality", "goal"]
                 }
             }
         }
 
-    # --- Execution Implementations ---
-
+    # --- EXECUTIONS ---
     @staticmethod
     def execute_get_current_time(**kwargs): 
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -211,65 +155,63 @@ class ToolRegistry:
         try:
             h = safe_json_loads(headers)
             d = safe_json_loads(data)
-            
-            # Safety timeout to prevent hanging
-            resp = requests.request(method, url, headers=h, json=d, timeout=15)
-            
-            return f"HTTP Status: {resp.status_code}\nResponse Body: {resp.text[:1500]}" # Limit response size
-        except Exception as e: 
-            return f"HTTP Request Error: {str(e)}"
+            resp = requests.request(method, url, headers=h, json=d, timeout=10)
+            return f"HTTP {resp.status_code}: {resp.text[:800]}"
+        except Exception as e: return f"Connection Error: {str(e)}"
 
     @staticmethod
     def execute_create_new_agent(name, personality, goal, creator_email, tools_needed="", api_secrets="{}", **kwargs):
         allowed, msg = check_limits(creator_email, 'create_agent')
         if not allowed: return f"ERROR: {msg}"
         
-        tools = [t.strip() for t in tools_needed.split(',')] if tools_needed else []
+        # === INTELLIGENT TOOL MAPPING (AUTO-CORRECT) ===
+        # This fixes the issue where the AI asks for "Gmail Tool" but the code needs "make_http_request"
+        final_tools = []
         
-
-        # === ULTRA HARDENED PROMPT V2 ===
+        # 1. Always enable HTTP if secrets are provided (Safety Net)
+        secrets_dict = safe_json_loads(api_secrets)
+        if secrets_dict and len(secrets_dict) > 0:
+            final_tools.append("make_http_request")
+            
+        # 2. Parse requested tools text
+        tools_text = tools_needed.lower()
+        if "http" in tools_text or "web" in tools_text or "api" in tools_text or "request" in tools_text:
+            if "make_http_request" not in final_tools: final_tools.append("make_http_request")
+            
+        if "time" in tools_text or "date" in tools_text or "clock" in tools_text:
+            final_tools.append("get_current_time")
+            
+        # === INJECT EXECUTION KERNEL ===
         hardened_personality = f"""
         {personality}
         
-        [SYSTEM OVERRIDE - EXECUTION RULES]:
-        1. You are a FUNCTION CALLING ENGINE.
-        2. When you need to perform an action (check time, fetch data), you must generate a **Native Tool Call**.
-        3. DO NOT write the function name (like `get_current_time()`) inside the chat message.
-        4. DO NOT write python code.
-        5. SILENTLY execute the tool using the provided interface.
-        6. Use `make_http_request` for any external connection using the implanted API KEYS.
+        [SYSTEM KERNEL - READ ONLY]:
+        1. ROLE: You are an AUTONOMOUS EXECUTOR.
+        2. MANDATE: If the user asks for data/action, YOU MUST USE THE TOOLS.
+        3. SECRETS: You have access to API Keys embedded in your system. Use them in 'make_http_request'.
+        4. PROTOCOL: Do NOT say "I will check". EMIT THE TOOL CALL immediately.
         """
         
         cfg = {
             "name": name, 
             "personality": hardened_personality, 
             "goal": goal, 
-            "enabled_tools": tools, 
+            "enabled_tools": final_tools, 
             "model": "gpt-4o-mini", 
-            "temperature": 0.7, 
+            "temperature": 0.5, # Lower temp for better adherence
             "icon": "⚡"
         }
         
         save_agent_to_db(cfg, creator_email, api_secrets)
-        return f"SUCCESS: Agent '{name}' created with EXECUTION PROTOCOLS."
-        
-        # 4. Save to DB
-        aid = save_agent_to_db(cfg, creator_email, api_secrets)
-        
-        # 5. Create Initial Welcome Message (Onboarding)
-        initial_msg = f"שלום! אני הסוכן החדש שלך - {name}. הוגדרתי עם הכלים הבאים: {tools}. אני מחובר למערכות והמפתחות הוזנו בהצלחה. מה תרצה שאבצע?"
-        log_message(aid, creator_email, "assistant", initial_msg)
-        
-        return f"SUCCESS: Agent '{name}' created and initialized."
+        return f"SUCCESS: Agent '{name}' created. Tools enabled: {final_tools}. Ready in Chat tab."
 
-    # Registry Maps
     REGISTRY = {"get_current_time": execute_get_current_time, "make_http_request": execute_http_request, "create_new_agent": execute_create_new_agent}
     SCHEMAS = [get_current_time_tool(), get_http_request_tool(), get_create_agent_tool()]
 
-# ================== DB HELPERS ==================
+# ================== DB OPS ==================
 def save_agent_to_db(agent_data, creator, secrets_json="{}"):
     conn = get_db_connection()
-    aid = agent_data.get('id') or hashlib.md5(f"{agent_data['name']}{datetime.now()}".encode()).hexdigest()[:10]
+    aid = hashlib.md5(f"{agent_data['name']}{time.time()}".encode()).hexdigest()[:10]
     agent_data['id'] = aid
     conn.execute("INSERT OR REPLACE INTO agents VALUES (?, ?, ?, ?, ?, ?)",
              (aid, creator, agent_data['name'], json.dumps(agent_data), datetime.now().isoformat(), secrets_json))
@@ -289,47 +231,37 @@ def get_user_agents(user_email):
         agents[r[0]] = cfg
     return agents
 
-def log_message(agent_id, user_email, role, content):
-    conn = get_db_connection()
-    conn.execute("INSERT INTO messages (agent_id, user_email, role, content, timestamp) VALUES (?, ?, ?, ?, ?)",
-                (agent_id, user_email, role, content, datetime.now().isoformat()))
-    conn.commit()
-    conn.close()
-
 def load_chat_history(agent_id):
     conn = get_db_connection()
     rows = conn.execute("SELECT role, content FROM messages WHERE agent_id=? ORDER BY id ASC", (agent_id,)).fetchall()
     conn.close()
     return [{"role": r[0], "content": r[1]} for r in rows]
 
-# ================== AGENT RUNTIME (THE BRAIN) ==================
+# ================== RUN ENGINE ==================
 def run_agent_turn(agent_config, history, user_msg, user_email, agent_id):
-    """
-    Executes the ReAct Loop: Thought -> Action -> Observation -> Response
-    """
-    allowed, msg = check_limits(user_email, 'send_message')
-    if not allowed: return msg
-
     client = OpenAI(api_key=SYSTEM_API_KEY)
-    log_message(agent_id, user_email, "user", user_msg)
     
-    # Setup Context
+    # Save User Msg
+    conn = get_db_connection()
+    conn.execute("INSERT INTO messages (agent_id, user_email, role, content, timestamp) VALUES (?, ?, ?, ?, ?)",
+                (agent_id, user_email, "user", user_msg, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+    
+    # Tool Filtering
     enabled = agent_config.get('enabled_tools', [])
     active_schemas = [t for t in ToolRegistry.SCHEMAS if t['function']['name'] in enabled]
     if not active_schemas: active_schemas = None
 
-    # Inject Secrets into Context (Invisible to user)
+    # Secrets Injection
     secrets_context = ""
     if agent_config.get('secrets') and agent_config['secrets'] != "{}":
-        secrets_context = f"\n\n[SECURE CONTEXT]: The following API KEYS are available for use in 'make_http_request':\n{agent_config['secrets']}"
+        secrets_context = f"\n\n[SYSTEM SECRETS]:\n{agent_config['secrets']}\n(Use these in HTTP Headers/Body)"
 
-    messages = [{"role": "system", "content": f"{agent_config['personality']}\nGoal: {agent_config['goal']}{secrets_context}"}] + history + [{"role": "user", "content": user_msg}]
+    messages = [{"role": "system", "content": f"{agent_config['personality']}\n{secrets_context}"}] + history + [{"role": "user", "content": user_msg}]
 
     try:
-        # UI Spinner for Latency Management
-        with st.spinner("🤖 הסוכן מעבד נתונים ופונה למערכות..."):
-            
-            # 1. First LLM Call (Reasoning)
+        with st.spinner("🤖 הסוכן חושב ומבצע..."):
             response = client.chat.completions.create(
                 model=agent_config.get('model', 'gpt-4o-mini'),
                 messages=messages,
@@ -338,79 +270,58 @@ def run_agent_turn(agent_config, history, user_msg, user_email, agent_id):
             )
             msg = response.choices[0].message
             
-            # 2. Tool Execution Loop (Acting)
+            # === TOOL EXECUTION BLOCK ===
             if msg.tool_calls:
-                messages.append(msg) # Add assistant's intent to history
+                messages.append(msg)
                 
                 for tool in msg.tool_calls:
                     func_name = tool.function.name
                     args = safe_json_loads(tool.function.arguments)
                     
-                    # UI Feedback Bubble
-                    with st.status(f"⚙️ מפעיל כלי: {func_name}...", expanded=True) as s:
+                    with st.status(f"⚙️ מפעיל כלי: {func_name}", expanded=True) as s:
                         if func_name == "create_new_agent": 
                             result = ToolRegistry.execute_create_new_agent(**args, creator_email=user_email)
                         elif func_name in ToolRegistry.REGISTRY: 
                             result = ToolRegistry.REGISTRY[func_name](**args)
                         else: 
-                            result = "Error: Tool not found"
+                            result = "Error: Tool Disabled or Not Found"
                         
-                        st.write(f"פלט מערכת: {result}")
-                        s.update(label=f"✅ בוצע: {func_name}", state="complete")
+                        st.write(result)
+                        s.update(label=f"✅ הסתיים: {func_name}", state="complete")
                     
-                    # Feed Observation back to LLM
                     messages.append({"role": "tool", "tool_call_id": tool.id, "content": str(result)})
                 
-                # 3. Second LLM Call (Synthesis/Response)
+                # Final Response after tools
                 final_resp = client.chat.completions.create(model=agent_config.get('model', 'gpt-4o-mini'), messages=messages)
                 final_content = final_resp.choices[0].message.content
-                log_message(agent_id, user_email, "assistant", final_content)
-                return final_content
                 
+                # Save Assistant Msg
+                conn = get_db_connection()
+                conn.execute("INSERT INTO messages (agent_id, user_email, role, content, timestamp) VALUES (?, ?, ?, ?, ?)",
+                            (agent_id, user_email, "assistant", final_content, datetime.now().isoformat()))
+                conn.commit()
+                conn.close()
+                
+                return final_content
             else:
-                # No tools needed, just talk
-                log_message(agent_id, user_email, "assistant", msg.content)
+                # Plain Text Response
+                conn = get_db_connection()
+                conn.execute("INSERT INTO messages (agent_id, user_email, role, content, timestamp) VALUES (?, ?, ?, ?, ?)",
+                            (agent_id, user_email, "assistant", msg.content, datetime.now().isoformat()))
+                conn.commit()
+                conn.close()
                 return msg.content
             
     except Exception as e:
-        return f"System Critical Error: {str(e)}"
+        return f"System Error: {str(e)}"
 
-# ================== CEO DASHBOARD ==================
-def show_ceo_dashboard():
-    st.title("🛡️ שער הניהול (CEO)")
-    st.markdown(f"מחובר: **{OWNER_EMAIL}**")
-    conn = get_db_connection()
-    pending = conn.execute("SELECT COUNT(*) FROM users WHERE is_approved=0").fetchone()[0]
-    conn.close()
-    
-    if pending > 0: st.warning(f"⚠️ {pending} ממתינים לאישור")
-    else: st.success("המערכת יציבה. אין בקשות חדשות.")
-
-    tab1, tab2 = st.tabs(["👥 ניהול משתמשים", "📊 נתוני שימוש"])
-    with tab1:
-        conn = get_db_connection()
-        df = pd.read_sql_query("SELECT email, plan, is_approved, agents_created, joined_at FROM users", conn)
-        conn.close()
-        edited = st.data_editor(df, key="users_edit", use_container_width=True)
-        if st.button("💾 שמור שינויים"):
-            conn = get_db_connection()
-            for i, row in edited.iterrows():
-                conn.execute("UPDATE users SET plan=?, is_approved=? WHERE email=?", (row['plan'], 1 if row['is_approved'] else 0, row['email']))
-            conn.commit()
-            conn.close()
-            st.rerun()
-
-# ================== MAIN APPLICATION ==================
+# ================== UI & ROUTING ==================
 def main():
-    setup_rtl() # Load Hebrew CSS
-    if 'page' not in st.session_state: st.session_state.page = "🏠 בית"
+    setup_rtl()
     
     with st.sidebar:
-        st.title("Platform V13.0")
-        
-        # Auth Logic
-        email = st.text_input("Email", value=st.session_state.get('user_email','')).strip().lower()
-        user_status = None
+        st.title("AI Platform V14.0")
+        email = st.text_input("התחברות (Email)", value=st.session_state.get('user_email','')).strip().lower()
         
         if email:
             st.session_state.user_email = email
@@ -418,57 +329,52 @@ def main():
             
             # Owner Bypass
             if email == OWNER_EMAIL:
-                exists = conn.execute("SELECT 1 FROM users WHERE email=?", (email,)).fetchone()
-                if not exists:
-                    conn.execute("INSERT INTO users (email, plan, agents_created, joined_at, is_approved) VALUES (?, ?, 0, ?, 1)", (email, "vip", datetime.now().isoformat()))
+                if not conn.execute("SELECT 1 FROM users WHERE email=?", (email,)).fetchone():
+                    conn.execute("INSERT INTO users (email, plan, agents_created, is_approved) VALUES (?, 'vip', 0, 1)", (email,))
                 else:
-                    # Ensure owner is always VIP/Approved
                     conn.execute("UPDATE users SET is_approved=1, plan='vip' WHERE email=?", (email,))
                 conn.commit()
 
-            user = conn.execute("SELECT is_approved, plan FROM users WHERE email=?", (email,)).fetchone()
+            user = conn.execute("SELECT is_approved FROM users WHERE email=?", (email,)).fetchone()
             if not user:
-                conn.execute("INSERT INTO users (email, plan, agents_created, joined_at, is_approved) VALUES (?, ?, 0, ?, 0)", (email, "free", datetime.now().isoformat()))
+                conn.execute("INSERT INTO users (email, plan, agents_created, is_approved) VALUES (?, 'free', 0, 0)", (email,))
                 conn.commit()
-                st.warning("חשבון נוצר! ממתין לאישור מנהל.")
-            else:
-                user_status = {"approved": bool(user[0]), "plan": user[1]}
+                st.warning("ממתין לאישור")
+                st.stop()
+            elif not user[0]:
+                st.error("חסום / ממתין לאישור")
+                st.stop()
+            conn.close()
+            
+            st.success("מחובר ✅")
+            st.divider()
+            
+            menu = ["🏠 בית", "🤖 בונה הסוכנים", "💬 צ'אט"]
+            if email == OWNER_EMAIL: menu.append("👑 ניהול")
+            st.session_state.page = st.radio("תפריט", menu)
+
+    if 'page' not in st.session_state: st.session_state.page = "🏠 בית"
+
+    # --- PAGES ---
+    if st.session_state.page == "🏠 בית":
+        st.title("ברוכים הבאים לעתיד")
+        st.markdown("המערכת מוכנה ליצירת סוכני אוטומציה.")
+
+    elif st.session_state.page == "👑 ניהול":
+        if st.session_state.user_email == OWNER_EMAIL:
+            st.title("ניהול משתמשים")
+            conn = get_db_connection()
+            df = pd.read_sql_query("SELECT * FROM users", conn)
+            st.dataframe(df)
             conn.close()
 
-        if user_status and user_status['approved']:
-            st.success(f"מחובר: {user_status['plan'].upper()}")
-            st.divider()
-            menu = ["🏠 בית", "🤖 בונה הסוכנים", "💬 צ'אט"]
-            if email == OWNER_EMAIL: menu.append("🛡️ שער הניהול (CEO)")
-            st.session_state.page = st.radio("תפריט", menu)
-        else:
-            st.session_state.page = "BLOCKED"
-
-    # --- Routing Logic ---
-    if st.session_state.page == "BLOCKED":
-        st.title("⛔ גישה מוגבלת")
-        st.info("המשתמש שלך טרם אושר ע״י המנהל.")
-
-    elif st.session_state.page == "🛡️ שער הניהול (CEO)":
-        if st.session_state.get('user_email') == OWNER_EMAIL: show_ceo_dashboard()
-
-    elif st.session_state.page == "🏠 בית":
-        st.title("ברוכים הבאים")
-        st.markdown("### מערכת ניהול סוכנים אוטונומיים\nכאן תוכל ליצור, לנהל ולהפעיל סוכני AI מתקדמים המחוברים למערכות הארגון שלך.")
-
     elif st.session_state.page == "🤖 בונה הסוכנים":
-        st.title("🤖 בונה הסוכנים (The Architect)")
-        
-        # SMART CONSULTANT PROMPT
-        builder_agent = {
+        st.title("🤖 בונה הסוכנים")
+        # The Consultant
+        builder = {
             "name": "Architect", 
-            "personality": """You are an expert AI Solutions Architect.
-            PROTOCOL:
-            1. If the user asks for integrations (Gmail, Store, etc.), EXPLAIN that API Keys are needed.
-            2. GUIDE the user on how to get them.
-            3. DO NOT create the agent until you have the keys (or user asks for mock data).
-            4. Use 'create_new_agent' only when ready.""", 
-            "goal": "Build functional agents", 
+            "personality": "You are an expert AI Consultant. Ask for API Keys if needed. Use 'create_new_agent' to build.", 
+            "goal": "Build agents", 
             "enabled_tools": ["create_new_agent"], 
             "model": "gpt-4o"
         }
@@ -477,40 +383,40 @@ def main():
         for m in st.session_state.builder_log:
             with st.chat_message(m["role"]): st.markdown(m["content"])
             
-        if p := st.chat_input("איזה סוכן תרצה לבנות?"):
+        if p := st.chat_input("מה לבנות?"):
             st.session_state.builder_log.append({"role": "user", "content": p})
             with st.chat_message("user"): st.markdown(p)
             with st.chat_message("assistant"):
-                resp = run_agent_turn(builder_agent, st.session_state.builder_log[:-1], p, st.session_state.user_email, "SYS_BUILDER")
+                resp = run_agent_turn(builder, st.session_state.builder_log[:-1], p, st.session_state.user_email, "BUILDER")
                 st.markdown(resp)
                 st.session_state.builder_log.append({"role": "assistant", "content": resp})
 
     elif st.session_state.page == "💬 צ'אט":
-        st.title("💬 חדר המבצעים")
-        my_agents = get_user_agents(st.session_state.user_email)
-        
-        if not my_agents: 
-            st.info("עדיין לא יצרת סוכנים. עבור ל'בונה הסוכנים' כדי להתחיל.")
+        st.title("💬 צ'אט")
+        agents = get_user_agents(st.session_state.user_email)
+        if not agents: 
+            st.info("אין סוכנים.")
         else:
-            aid = st.selectbox("בחר סוכן לעבודה:", list(my_agents.keys()), format_func=lambda x: my_agents[x]['name'])
+            aid = st.selectbox("בחר סוכן:", list(agents.keys()), format_func=lambda x: agents[x]['name'])
             
-            # Load History
-            if f"history_{aid}" not in st.session_state:
-                st.session_state[f"history_{aid}"] = load_chat_history(aid)
+            if f"hist_{aid}" not in st.session_state:
+                st.session_state[f"hist_{aid}"] = load_chat_history(aid)
             
-            # Display Chat
-            for m in st.session_state[f"history_{aid}"]:
+            # AUTO WELCOME MESSAGE (IF CHAT IS EMPTY)
+            if not st.session_state[f"hist_{aid}"]:
+                welcome = f"שלום! אני {agents[aid]['name']}. אני מוכן לעבודה. מה תרצה שאעשה?"
+                st.session_state[f"hist_{aid}"].append({"role": "assistant", "content": welcome})
+            
+            for m in st.session_state[f"hist_{aid}"]:
                 with st.chat_message(m["role"]): st.markdown(m["content"])
                 
-            if p := st.chat_input(f"שלח הודעה ל-{my_agents[aid]['name']}..."):
-                st.session_state[f"history_{aid}"].append({"role": "user", "content": p})
+            if p := st.chat_input():
+                st.session_state[f"hist_{aid}"].append({"role": "user", "content": p})
                 with st.chat_message("user"): st.markdown(p)
                 with st.chat_message("assistant"):
-                    ans = run_agent_turn(my_agents[aid], st.session_state[f"history_{aid}"][:-1], p, st.session_state.user_email, aid)
+                    ans = run_agent_turn(agents[aid], st.session_state[f"hist_{aid}"][:-1], p, st.session_state.user_email, aid)
                     st.markdown(ans)
-                    st.session_state[f"history_{aid}"].append({"role": "assistant", "content": ans})
+                    st.session_state[f"hist_{aid}"].append({"role": "assistant", "content": ans})
 
 if __name__ == "__main__":
     main()
-
-
